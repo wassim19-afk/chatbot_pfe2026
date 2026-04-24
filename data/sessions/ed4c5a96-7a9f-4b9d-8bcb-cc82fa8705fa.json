@@ -1,0 +1,17 @@
+{
+  "session_id": "ed4c5a96-7a9f-4b9d-8bcb-cc82fa8705fa",
+  "session_name": "Session ed4c5a96",
+  "created_at": "2026-04-24T00:54:35.546134",
+  "updated_at": "2026-04-24T00:54:35.573882",
+  "interactions": [
+    {
+      "timestamp": "2026-04-24T00:54:35.556586",
+      "question": "Quel est mon CA de 2024 ?",
+      "sql_generated": "BI_QUERY",
+      "result_summary": "2 rows",
+      "row_count": 2,
+      "response": "Chiffre d'affaires: 1,200,000 BnFCFA"
+    }
+  ],
+  "interaction_count": 1
+}
