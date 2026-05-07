@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+import pyodbc
 
 from data.db_connection import test_db_connection
 from services.bi_sql_service import BIQueryError, bi_query_service
@@ -71,6 +72,11 @@ app.add_middleware(
 async def startup_event() -> None:
     logger.info("FastAPI startup: running SQL Server connection test")
     try:
+        drivers = pyodbc.drivers()
+        print(f"pyodbc.drivers() = {drivers}")
+        logger.info("Installed ODBC drivers: %s", drivers)
+        if "ODBC Driver 18 for SQL Server" not in drivers:
+            logger.error("ODBC Driver 18 for SQL Server is missing from pyodbc.drivers()")
         success = await asyncio.to_thread(test_db_connection)
         logger.info("FastAPI startup SQL test result=%s", success)
     except Exception:

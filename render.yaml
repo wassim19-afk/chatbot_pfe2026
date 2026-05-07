@@ -5,7 +5,7 @@ services:
     plan: free
     branch: main
     rootDir: .
-    buildCommand: pip install -r requirements.txt
+    buildCommand: bash render-build.sh
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     autoDeployTrigger: commit
     healthCheckPath: /
@@ -30,6 +30,3 @@ services:
         sync: false
       - key: DB_PASSWORD
         sync: false
-    aptPackages:
-      - unixodbc-dev
-      - msodbcsql18

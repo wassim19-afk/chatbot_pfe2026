@@ -82,6 +82,7 @@ def test_db_connection() -> bool:
     conn = None
     cursor = None
     try:
+        logger.info("Installed pyodbc drivers before test: %s", pyodbc.drivers())
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1 AS ok")
