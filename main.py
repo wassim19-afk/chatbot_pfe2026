@@ -77,6 +77,10 @@ async def startup_event() -> None:
         logger.info("Installed ODBC drivers: %s", drivers)
         if "ODBC Driver 18 for SQL Server" not in drivers:
             logger.error("ODBC Driver 18 for SQL Server is missing from pyodbc.drivers()")
+        diagnostics = bi_query_service.startup_diagnostics()
+        logger.info("SQL startup diagnostics table_count=%s", diagnostics.get("table_count"))
+        logger.info("SQL startup diagnostics tables=%s", diagnostics.get("tables", [])[:20])
+        logger.info("SQL startup diagnostics resolved_configs=%s", diagnostics.get("resolved_configs"))
         success = await asyncio.to_thread(test_db_connection)
         logger.info("FastAPI startup SQL test result=%s", success)
     except Exception:

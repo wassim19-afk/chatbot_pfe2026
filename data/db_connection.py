@@ -4,9 +4,8 @@
 
 import os
 import pyodbc
-import pyodbc
 import time
-from typing import List, Dict, Any
+from typing import Any, Dict, Iterable, List
 from config.settings import settings
 from config.logger import get_logger
 from services.sql_validator import validate_sql
@@ -66,6 +65,101 @@ def get_db_connection():
     except pyodbc.Error:
         logger.exception("pyodbc connection failed")
         raise
+
+
+def _split_table_name(table_name: str) -> tuple[str, str]:
+    cleaned = table_name.replace("[", "").replace("]", "")
+    parts = cleaned.split(".")
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return "dbo", cleaned
+
+
+def get_available_tables() -> List[str]:
+    """Return all base tables in the current SQL Server database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        logger.info("Fetching available SQL tables from INFORMATION_SCHEMA.TABLES")
+        cursor.execute(
+            """
+            SELECT TABLE_SCHEMA, TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE = 'BASE TABLE'
+            ORDER BY TABLE_SCHEMA, TABLE_NAME
+            """
+        )
+        rows = cursor.fetchall()
+        tables = [f"{schema}.{name}" for schema, name in rows]
+        logger.info("Available SQL tables count=%d", len(tables))
+        logger.info("Available SQL tables sample=%s", tables[:20])
+        return tables
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_table_columns(table_name: str) -> List[str]:
+    """Return all column names for a specific table."""
+    schema_name, bare_table_name = _split_table_name(table_name)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        logger.info("Fetching columns for table=%s", table_name)
+        cursor.execute(
+            """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION
+            """,
+            (schema_name, bare_table_name),
+        )
+        rows = cursor.fetchall()
+        columns = [column for (column,) in rows]
+        logger.info("Columns for table=%s: %s", table_name, columns)
+        return columns
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def validate_table_exists(table_name: str) -> bool:
+    """Check if a base table exists in the database."""
+    schema_name, bare_table_name = _split_table_name(table_name)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'
+            """,
+            (schema_name, bare_table_name),
+        )
+        exists = cursor.fetchone() is not None
+        logger.info("validate_table_exists(%s) -> %s", table_name, exists)
+        return exists
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def validate_columns_exist(table_name: str, columns: Iterable[str]) -> bool:
+    """Check if all requested columns exist in a table."""
+    existing_columns = {column.lower() for column in get_table_columns(table_name)}
+    requested_columns = [str(column).strip().strip("[]") for column in columns]
+    missing_columns = [column for column in requested_columns if column.lower() not in existing_columns]
+    is_valid = not missing_columns
+    logger.info(
+        "validate_columns_exist(table=%s, columns=%s) -> %s missing=%s",
+        table_name,
+        requested_columns,
+        is_valid,
+        missing_columns,
+    )
+    return is_valid
 
 
 def test_db_connection() -> bool:
