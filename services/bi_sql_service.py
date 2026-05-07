@@ -34,16 +34,40 @@ class BIQueryResult:
     data: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class KPIQueryConfig:
+    table_candidates: tuple[str, ...]
+    amount_candidates: tuple[str, ...]
+    use_abs: bool = False
+
+
 class BIQueryService:
-    KPI_TABLE_MAP = {
-        KPIType.REVENUE: ("[dbo].[Fact_Sales]", "[Sales Amount (Actual)]"),
-        KPIType.PURCHASE: ("[dbo].[Fact_Purshase]", "[Purchase Amount (Actual)]"),
-        KPIType.CASH_IN: ("[dbo].[Fact_CustomerPayementDetail]", "[Amount]"),
-        KPIType.CASH_OUT: ("[dbo].[Fact_VendorPayementDetail]", "[Amount]"),
+    KPI_TABLE_MAP: dict[KPIType, KPIQueryConfig] = {
+        KPIType.REVENUE: KPIQueryConfig(
+            table_candidates=("[dbo].[Fact_Sales]",),
+            amount_candidates=("[Sales Amount (Actual)]", "[Sales Amt_ Incl_ VAT (Actual)]"),
+            use_abs=True,
+        ),
+        KPIType.PURCHASE: KPIQueryConfig(
+            table_candidates=("[dbo].[Fact_Purshase]", "[dbo].[Fact_PurchaseDetail]"),
+            amount_candidates=("[Purchase Amount (Actual)]",),
+            use_abs=True,
+        ),
+        KPIType.CASH_IN: KPIQueryConfig(
+            table_candidates=("[dbo].[Fact_CustomerPayementDetail]", "[dbo].[Fact_CashInDetail]"),
+            amount_candidates=("[Amount]",),
+            use_abs=False,
+        ),
+        KPIType.CASH_OUT: KPIQueryConfig(
+            table_candidates=("[dbo].[Fact_VendorPayementDetail]", "[dbo].[Fact_CashOutDetail]"),
+            amount_candidates=("[Amount]",),
+            use_abs=False,
+        ),
     }
 
     def __init__(self) -> None:
         self.assistant = BIAssistant()
+        self._amount_column_cache: dict[str, str] = {}
 
     def _normalize_question(self, question: str) -> str:
         normalized = re.sub(r"\s+", " ", (question or "")).strip().lower()
@@ -67,6 +91,79 @@ class BIQueryService:
         companies = [company.strip().upper() for company in raw_companies.split(",") if company.strip()]
         return companies or ["PEM", "SAPEC"]
 
+    def _resolve_table_name(self, table_candidates: tuple[str, ...]) -> str:
+        logger.info("Resolving KPI table from candidates=%s", table_candidates)
+        for candidate in table_candidates:
+            if candidate in self._amount_column_cache:
+                logger.info("Using cached table resolution for %s", candidate)
+                return candidate
+
+            schema_name, bare_table_name = self._split_table_name(candidate)
+            metadata_sql = (
+                "SELECT 1 AS [exists] "
+                "FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'"
+            )
+            try:
+                rows = execute_query(metadata_sql, (schema_name, bare_table_name))
+                if rows:
+                    logger.info("Resolved KPI table: %s", candidate)
+                    self._amount_column_cache[candidate] = candidate
+                    return candidate
+            except Exception:
+                logger.exception("Failed to inspect table candidate=%s", candidate)
+
+        raise BIQueryError(f"No supported KPI table found among candidates={table_candidates}")
+
+    def _resolve_amount_column(self, table_name: str, candidates: tuple[str, ...]) -> str:
+        cache_key = f"{table_name}::amount"
+        if cache_key in self._amount_column_cache:
+            resolved = self._amount_column_cache[cache_key]
+            logger.info("Using cached amount column %s for table %s", resolved, table_name)
+            return resolved
+
+        schema_name, bare_table_name = self._split_table_name(table_name)
+        logger.info(
+            "Resolving amount column for table=%s using candidates=%s",
+            table_name,
+            candidates,
+        )
+        metadata_sql = (
+            "SELECT COLUMN_NAME "
+            "FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
+            "ORDER BY ORDINAL_POSITION"
+        )
+        try:
+            rows = execute_query(metadata_sql, (schema_name, bare_table_name))
+            available_columns = {str(row.get("COLUMN_NAME", "")) for row in rows}
+            logger.info("Available columns for %s: %s", table_name, sorted(available_columns))
+
+            for candidate in candidates:
+                clean_candidate = candidate.strip("[]")
+                if clean_candidate in available_columns:
+                    resolved = f"[{clean_candidate}]"
+                    self._amount_column_cache[cache_key] = resolved
+                    logger.info("Resolved amount column for %s: %s", table_name, resolved)
+                    return resolved
+
+            raise BIQueryError(
+                f"No supported amount column found for {table_name}. Candidates={candidates}, available={sorted(available_columns)}"
+            )
+        except Exception as exc:
+            logger.exception("Failed to resolve amount column for table=%s", table_name)
+            if isinstance(exc, BIQueryError):
+                raise
+            raise BIQueryError(f"Unable to resolve amount column for {table_name}: {exc}") from exc
+
+    @staticmethod
+    def _split_table_name(table_name: str) -> tuple[str, str]:
+        cleaned = table_name.replace("[", "").replace("]", "")
+        parts = cleaned.split(".")
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return "dbo", cleaned
+
     def parse_filters(self, question: str) -> dict[str, Any]:
         parsed = self.assistant.parse_query(question)
         logger.info(
@@ -81,7 +178,18 @@ class BIQueryService:
 
     def build_sql(self, parsed: dict[str, Any]) -> tuple[str, tuple[Any, ...]]:
         kpi_type = parsed["kpi_type"]
-        table_name, amount_column = self.KPI_TABLE_MAP[kpi_type]
+        config = self.KPI_TABLE_MAP[kpi_type]
+        table_name = self._resolve_table_name(config.table_candidates)
+        amount_column = self._resolve_amount_column(table_name, config.amount_candidates)
+        amount_expression = f"ABS({amount_column})" if config.use_abs else amount_column
+
+        logger.info(
+            "Using KPI config: kpi_type=%s table=%s amount_column=%s use_abs=%s",
+            kpi_type.value,
+            table_name,
+            amount_column,
+            config.use_abs,
+        )
 
         where_clauses = []
         params: list[Any] = []
@@ -112,7 +220,7 @@ class BIQueryService:
 
         where_clause = " AND ".join(where_clauses)
         sql = (
-            f"SELECT ISNULL(SUM({amount_column}), 0) AS total_value "
+            f"SELECT ISNULL(SUM({amount_expression}), 0) AS total_value "
             f"FROM {table_name} "
             f"WHERE {where_clause}"
         )
