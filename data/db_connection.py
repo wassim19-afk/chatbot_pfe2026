@@ -16,6 +16,14 @@ def get_db_connection():
     Establishes and returns a connection to the SQL Server database.
     Uses centralized settings for configuration to keep credentials secure.
     """
+    logger.info(
+        "Creating SQL Server connection (server=%s, database=%s, username_set=%s, password_set=%s)",
+        settings.DB_SERVER,
+        settings.DB_DATABASE,
+        bool(settings.DB_USERNAME),
+        bool(settings.DB_PASSWORD),
+    )
+
     if settings.DB_PASSWORD:
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -31,6 +39,7 @@ def get_db_connection():
             f"DATABASE={settings.DB_DATABASE};"
             "Trusted_Connection=yes;"
         )
+    logger.info("Opening SQL Server connection")
     return pyodbc.connect(conn_str)
 
 def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
@@ -51,6 +60,10 @@ def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
     """
     from decimal import Decimal
     
+    logger.info("SQL execution requested")
+    logger.info("SQL statement: %s", sql_query)
+    logger.info("SQL params: %s", params)
+
     # Validate SQL before execution
     is_valid, error_msg = validate_sql(sql_query)
     if not is_valid:
@@ -60,6 +73,7 @@ def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
     start_time = time.time()
     
     conn = get_db_connection()
+    logger.info("SQL Server connection established successfully")
     cursor = conn.cursor()
     try:
         if params:
@@ -85,12 +99,18 @@ def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
             results.append(row_dict)
         
         elapsed_ms = (time.time() - start_time) * 1000
-        logger.warning(f"SQL execution completed in {elapsed_ms:.0f}ms, returned {len(results)} rows")
+        logger.info("SQL execution completed in %.0fms, returned %d row(s)", elapsed_ms, len(results))
+        if results:
+            logger.info("SQL execution sample row: %s", results[0])
         
         return results
+    except Exception:
+        logger.exception("SQL execution failed")
+        raise
     finally:
         cursor.close()
         conn.close()
+        logger.info("SQL Server connection closed")
 
 def get_database_tables() -> List[str]:
     """

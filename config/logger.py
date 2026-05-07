@@ -6,7 +6,7 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-def setup_logger(name: str, log_level: int = logging.WARNING) -> logging.Logger:
+def setup_logger(name: str, log_level: int = logging.INFO) -> logging.Logger:
     """
     Setup and return a logger with standard configuration.
     
@@ -18,12 +18,11 @@ def setup_logger(name: str, log_level: int = logging.WARNING) -> logging.Logger:
         logging.Logger: Configured logger instance
     """
     logger = logging.getLogger(name)
+    logger.setLevel(log_level)
     
     # Only configure if not already configured
     if logger.handlers:
         return logger
-    
-    logger.setLevel(log_level)
     
     # Create logs directory if it doesn't exist
     log_dir = "logs"
@@ -61,4 +60,4 @@ def setup_logger(name: str, log_level: int = logging.WARNING) -> logging.Logger:
 # Create application-level loggers
 def get_logger(name: str) -> logging.Logger:
     """Get a logger for the given module name."""
-    return setup_logger(name, log_level=logging.WARNING)
+    return setup_logger(name, log_level=logging.INFO)
