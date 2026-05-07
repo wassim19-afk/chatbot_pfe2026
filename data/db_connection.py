@@ -2,6 +2,8 @@
 # This module handles database connections and query execution for SQL Server.
 # It uses pyodbc for connectivity and includes SQL validation before execution.
 
+import os
+import pyodbc
 import pyodbc
 import time
 from typing import List, Dict, Any
@@ -11,36 +13,91 @@ from services.sql_validator import validate_sql
 
 logger = get_logger(__name__)
 
+
+def _build_connection_string() -> str:
+    driver = settings.DB_DRIVER or os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server')
+    encrypt = settings.DB_ENCRYPT or os.getenv('DB_ENCRYPT', 'yes')
+    trust_server_certificate = settings.DB_TRUST_SERVER_CERTIFICATE or os.getenv('DB_TRUST_SERVER_CERTIFICATE', 'yes')
+
+    common_parts = [
+        f"DRIVER={{{driver}}}",
+        f"SERVER={settings.DB_SERVER}",
+        f"DATABASE={settings.DB_DATABASE}",
+        f"Encrypt={encrypt}",
+        f"TrustServerCertificate={trust_server_certificate}",
+        f"Connection Timeout={settings.DB_CONNECTION_TIMEOUT_SECONDS}",
+    ]
+
+    if settings.DB_PASSWORD:
+        common_parts.extend([
+            f"UID={settings.DB_USERNAME}",
+            f"PWD={settings.DB_PASSWORD}",
+        ])
+    else:
+        common_parts.append("Trusted_Connection=yes")
+
+    return ";".join(common_parts) + ";"
+
 def get_db_connection():
     """
     Establishes and returns a connection to the SQL Server database.
     Uses centralized settings for configuration to keep credentials secure.
     """
     logger.info(
-        "Creating SQL Server connection (server=%s, database=%s, username_set=%s, password_set=%s)",
+        "Creating SQL Server connection (server=%s, database=%s, driver=%s, username_set=%s, password_set=%s)",
         settings.DB_SERVER,
         settings.DB_DATABASE,
+        settings.DB_DRIVER,
         bool(settings.DB_USERNAME),
         bool(settings.DB_PASSWORD),
     )
 
-    if settings.DB_PASSWORD:
-        conn_str = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={settings.DB_SERVER};"
-            f"DATABASE={settings.DB_DATABASE};"
-            f"UID={settings.DB_USERNAME};"
-            f"PWD={settings.DB_PASSWORD};"
-        )
-    else:
-        conn_str = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={settings.DB_SERVER};"
-            f"DATABASE={settings.DB_DATABASE};"
-            "Trusted_Connection=yes;"
-        )
-    logger.info("Opening SQL Server connection")
-    return pyodbc.connect(conn_str)
+    conn_str = _build_connection_string()
+    logger.info(
+        "Opening SQL Server connection with DRIVER=%s, Encrypt=%s, TrustServerCertificate=%s, timeout=%s",
+        settings.DB_DRIVER,
+        settings.DB_ENCRYPT,
+        settings.DB_TRUST_SERVER_CERTIFICATE,
+        settings.DB_CONNECTION_TIMEOUT_SECONDS,
+    )
+
+    try:
+        return pyodbc.connect(conn_str)
+    except pyodbc.Error:
+        logger.exception("pyodbc connection failed")
+        raise
+
+
+def test_db_connection() -> bool:
+    """
+    Verify the SQL Server connection using `SELECT 1`.
+
+    Returns:
+        bool: True when the connection and query succeed.
+
+    Raises:
+        pyodbc.Error: If the connection or query fails.
+    """
+    logger.info("Starting SQL connection test using SELECT 1")
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS ok")
+        row = cursor.fetchone()
+        success = bool(row and row[0] == 1)
+        logger.info("SQL connection test succeeded: %s", success)
+        return success
+    except pyodbc.Error:
+        logger.exception("SQL connection test failed")
+        raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+            logger.info("SQL connection test connection closed")
 
 def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
     """

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Optional
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from data.db_connection import test_db_connection
 from services.bi_sql_service import BIQueryError, bi_query_service
 
 load_dotenv()
@@ -63,6 +65,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    logger.info("FastAPI startup: running SQL Server connection test")
+    try:
+        success = await asyncio.to_thread(test_db_connection)
+        logger.info("FastAPI startup SQL test result=%s", success)
+    except Exception:
+        logger.exception("FastAPI startup SQL connection test failed")
 
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
