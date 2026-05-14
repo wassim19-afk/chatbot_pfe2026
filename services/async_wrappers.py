@@ -49,7 +49,7 @@ async def call_ollama_async(prompt: str, model: str = "mistral", timeout: int = 
 async def execute_query_async(sql_query: str, params: tuple = None) -> list:
     """
     Async wrapper for database query execution.
-    Runs synchronous pyodbc call in thread pool to avoid blocking.
+    Runs synchronous pymssql call in thread pool to avoid blocking.
     
     Args:
         sql_query (str): SQL query to execute

@@ -10,7 +10,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-import pyodbc
 
 from data.db_connection import test_db_connection
 from services.bi_sql_service import BIQueryError, bi_query_service
@@ -70,21 +69,38 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    logger.info("FastAPI startup: running SQL Server connection test")
+    """FastAPI startup: log configuration and test SQL Server connection."""
+    logger.info("=" * 80)
+    logger.info("FastAPI BI Chatbot API starting up")
+    logger.info("=" * 80)
+    
+    # Log pymssql backend info
+    logger.info("Using pymssql backend (no pyodbc / ODBC dependency)")
+    logger.info("DB_SERVER: %s", os.getenv("DB_SERVER", "not set"))
+    logger.info("DB_DATABASE: %s", os.getenv("DB_DATABASE", "not set"))
+    logger.info("DB_USER: %s", "set" if os.getenv("DB_USER") else "not set")
+    logger.info("LOG_LEVEL: %s", os.getenv("LOG_LEVEL", "INFO"))
+    
     try:
-        drivers = pyodbc.drivers()
-        print(f"pyodbc.drivers() = {drivers}")
-        logger.info("Installed ODBC drivers: %s", drivers)
-        if "ODBC Driver 18 for SQL Server" not in drivers:
-            logger.error("ODBC Driver 18 for SQL Server is missing from pyodbc.drivers()")
+        logger.info("Running BI service diagnostics...")
         diagnostics = bi_query_service.startup_diagnostics()
-        logger.info("SQL startup diagnostics table_count=%s", diagnostics.get("table_count"))
-        logger.info("SQL startup diagnostics tables=%s", diagnostics.get("tables", [])[:20])
-        logger.info("SQL startup diagnostics resolved_configs=%s", diagnostics.get("resolved_configs"))
+        logger.info("BI diagnostics table_count=%s", diagnostics.get("table_count"))
+        logger.info("BI diagnostics tables=%s", diagnostics.get("tables", [])[:10])
+        
+        logger.info("Testing SQL Server connection (SELECT 1)...")
         success = await asyncio.to_thread(test_db_connection)
-        logger.info("FastAPI startup SQL test result=%s", success)
-    except Exception:
-        logger.exception("FastAPI startup SQL connection test failed")
+        logger.info("SQL connection test: %s", "✓ SUCCESS" if success else "✗ FAILED")
+        
+        if success:
+            logger.info("=" * 80)
+            logger.info("FastAPI startup complete - all systems ready")
+            logger.info("=" * 80)
+        else:
+            logger.error("SQL connection test failed but continuing (queries may fail)")
+            
+    except Exception as e:
+        logger.exception("FastAPI startup diagnostic failed: %s", str(e))
+        logger.error("API will start but SQL queries may fail - check logs for details")
 
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
@@ -112,6 +128,42 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get("/", tags=["health"])
 async def root():
     return {"status": "ok", "service": "bi-chat-api"}
+
+
+@app.get("/diagnostics", tags=["diagnostics"])
+async def diagnostics_endpoint():
+    """
+    Diagnostics endpoint: check DB connection, backend info, and configuration.
+    Useful for testing Render deployment and troubleshooting connectivity.
+    """
+    logger.info("/diagnostics request")
+    
+    diagnostics_result = {
+        "service": "bi-chat-api",
+        "backend": "pymssql",
+        "db_server": os.getenv("DB_SERVER", "not set"),
+        "db_database": os.getenv("DB_DATABASE", "not set"),
+        "db_user_set": bool(os.getenv("DB_USER")),
+        "python_version": "3.11.9",
+        "using_pymssql": True,
+        "connection_test": False,
+        "error": None,
+    }
+    
+    try:
+        success = await asyncio.to_thread(test_db_connection)
+        diagnostics_result["connection_test"] = success
+        if success:
+            logger.info("/diagnostics: connection_test SUCCESS")
+        else:
+            diagnostics_result["error"] = "SELECT 1 test returned False"
+            logger.warning("/diagnostics: connection_test FAILED")
+    except Exception as e:
+        diagnostics_result["connection_test"] = False
+        diagnostics_result["error"] = str(e)
+        logger.exception("/diagnostics: connection_test exception: %s", str(e))
+    
+    return diagnostics_result
 
 
 @app.post(

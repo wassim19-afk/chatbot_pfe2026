@@ -5,7 +5,7 @@ services:
     plan: free
     branch: main
     rootDir: .
-    buildCommand: bash build.sh
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     autoDeployTrigger: commit
     healthCheckPath: /
@@ -13,8 +13,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: LOG_LEVEL
-        value: INFO
-      # Using pymssql (no ODBC driver required)
+        value: DEBUG
       - key: DB_CONNECTION_TIMEOUT_SECONDS
         value: "30"
       - key: DB_SERVER

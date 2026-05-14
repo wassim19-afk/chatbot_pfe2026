@@ -1,11 +1,10 @@
 # data/db_connection.py
-# This module handles database connections and query execution for SQL Server.
-# It uses pyodbc for connectivity and includes SQL validation before execution.
+# SQL Server connection helper using pymssql (no pyodbc / ODBC dependency)
 
 import os
-import pyodbc
 import time
 from typing import Any, Dict, Iterable, List
+import pymssql
 from config.settings import settings
 from config.logger import get_logger
 from services.sql_validator import validate_sql
@@ -13,57 +12,58 @@ from services.sql_validator import validate_sql
 logger = get_logger(__name__)
 
 
-def _build_connection_string() -> str:
-    driver = settings.DB_DRIVER or os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server')
-    encrypt = settings.DB_ENCRYPT or os.getenv('DB_ENCRYPT', 'yes')
-    trust_server_certificate = settings.DB_TRUST_SERVER_CERTIFICATE or os.getenv('DB_TRUST_SERVER_CERTIFICATE', 'yes')
-
-    common_parts = [
-        f"DRIVER={{{driver}}}",
-        f"SERVER={settings.DB_SERVER}",
-        f"DATABASE={settings.DB_DATABASE}",
-        f"Encrypt={encrypt}",
-        f"TrustServerCertificate={trust_server_certificate}",
-        f"Connection Timeout={settings.DB_CONNECTION_TIMEOUT_SECONDS}",
-    ]
-
-    if settings.DB_PASSWORD:
-        common_parts.extend([
-            f"UID={settings.DB_USERNAME}",
-            f"PWD={settings.DB_PASSWORD}",
-        ])
-    else:
-        common_parts.append("Trusted_Connection=yes")
-
-    return ";".join(common_parts) + ";"
-
 def get_db_connection():
     """
-    Establishes and returns a connection to the SQL Server database.
-    Uses centralized settings for configuration to keep credentials secure.
+    Create and return a pymssql connection to SQL Server using environment settings.
+
+    Expects environment variables:
+      - DB_SERVER: SQL Server hostname or IP
+      - DB_DATABASE: Database name
+      - DB_USER: SQL login username
+      - DB_PASSWORD: SQL login password
+
+    For remote deployments (Render), provide valid SQL credentials.
+    Windows integrated authentication is NOT available on Linux.
     """
+
+    server = settings.DB_SERVER
+    database = settings.DB_DATABASE
+    user = settings.DB_USER or os.getenv('DB_USER')
+    password = settings.DB_PASSWORD or os.getenv('DB_PASSWORD')
+
     logger.info(
-        "Creating SQL Server connection (server=%s, database=%s, driver=%s, username_set=%s, password_set=%s)",
-        settings.DB_SERVER,
-        settings.DB_DATABASE,
-        settings.DB_DRIVER,
-        bool(settings.DB_USERNAME),
-        bool(settings.DB_PASSWORD),
+        "Creating SQL Server connection (server=%s, database=%s, user_set=%s)",
+        server,
+        database,
+        bool(user and password),
     )
 
-    conn_str = _build_connection_string()
-    logger.info(
-        "Opening SQL Server connection with DRIVER=%s, Encrypt=%s, TrustServerCertificate=%s, timeout=%s",
-        settings.DB_DRIVER,
-        settings.DB_ENCRYPT,
-        settings.DB_TRUST_SERVER_CERTIFICATE,
-        settings.DB_CONNECTION_TIMEOUT_SECONDS,
-    )
-
+    # pymssql.connect(host, user, password, database)
     try:
-        return pyodbc.connect(conn_str)
-    except pyodbc.Error:
-        logger.exception("pyodbc connection failed")
+        if user and password:
+            conn = pymssql.connect(host=server, user=user, password=password, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
+        else:
+            logger.warning("DB_USER/DB_PASSWORD not set — attempting connection without credentials (may fail on Render).")
+            conn = pymssql.connect(host=server, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
+
+    logger.info(
+        "Creating SQL Server connection (server=%s, database=%s, user_set=%s)",
+        server,
+        database,
+        bool(user and password),
+    )
+
+    # pymssql.connect(host, user, password, database)
+    try:
+        if user and password:
+            conn = pymssql.connect(host=server, user=user, password=password, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
+        else:
+            logger.warning("DB_USER/DB_PASSWORD not set — attempting connection without credentials (may fail on Render).")
+            conn = pymssql.connect(host=server, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
+
+        return conn
+    except Exception:
+        logger.exception("pymssql connection failed — verify DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD and network access")
         raise
 
 
@@ -110,7 +110,7 @@ def get_table_columns(table_name: str) -> List[str]:
             """
             SELECT COLUMN_NAME
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
             ORDER BY ORDINAL_POSITION
             """,
             (schema_name, bare_table_name),
@@ -134,7 +134,7 @@ def validate_table_exists(table_name: str) -> bool:
             """
             SELECT 1
             FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND TABLE_TYPE = 'BASE TABLE'
             """,
             (schema_name, bare_table_name),
         )
@@ -168,15 +168,11 @@ def test_db_connection() -> bool:
 
     Returns:
         bool: True when the connection and query succeed.
-
-    Raises:
-        pyodbc.Error: If the connection or query fails.
     """
     logger.info("Starting SQL connection test using SELECT 1")
     conn = None
     cursor = None
     try:
-        logger.info("Installed pyodbc drivers before test: %s", pyodbc.drivers())
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1 AS ok")
@@ -184,7 +180,7 @@ def test_db_connection() -> bool:
         success = bool(row and row[0] == 1)
         logger.info("SQL connection test succeeded: %s", success)
         return success
-    except pyodbc.Error:
+    except Exception:
         logger.exception("SQL connection test failed")
         raise
     finally:
@@ -193,6 +189,7 @@ def test_db_connection() -> bool:
         if conn is not None:
             conn.close()
             logger.info("SQL connection test connection closed")
+
 
 def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
     """
@@ -234,7 +231,7 @@ def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
             cursor.execute(sql_query)
         
         # Fetch column names
-        columns = [column[0] for column in cursor.description]
+        columns = [column[0] for column in cursor.description] if cursor.description else []
         # Fetch all rows
         rows = cursor.fetchall()
         
@@ -260,9 +257,16 @@ def execute_query(sql_query: str, params: tuple = None) -> List[Dict[str, Any]]:
         logger.exception("SQL execution failed")
         raise
     finally:
-        cursor.close()
-        conn.close()
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
         logger.info("SQL Server connection closed")
+
 
 def get_database_tables() -> List[str]:
     """
@@ -279,6 +283,7 @@ def get_database_tables() -> List[str]:
     finally:
         cursor.close()
         conn.close()
+
 
 def get_database_schema() -> List[str]:
     """
@@ -321,6 +326,7 @@ def get_database_schema() -> List[str]:
         cursor.close()
         conn.close()
 
+
 def get_database_identifiers() -> List[str]:
     """
     Returns a list of database identifiers including table and column names.
@@ -347,6 +353,7 @@ def get_database_identifiers() -> List[str]:
         cursor.close()
         conn.close()
 
+
 def get_database_tables() -> List[str]:
     """
     Returns a list of table names available in the current database.
@@ -362,6 +369,7 @@ def get_database_tables() -> List[str]:
     finally:
         cursor.close()
         conn.close()
+
 
 def get_database_schema() -> List[str]:
     """

@@ -14,14 +14,11 @@ class Settings:
     Contains database, API, and other configuration parameters.
     """
 
-    # Database settings
+    # Database settings (pymssql backend, no ODBC)
     DB_SERVER: str = os.getenv('DB_SERVER', 'localhost')
     DB_DATABASE: str = os.getenv('DB_DATABASE', 'your_database')
-    DB_USERNAME: str = os.getenv('DB_USERNAME', 'your_username')
-    DB_PASSWORD: str = os.getenv('DB_PASSWORD', 'your_password')
-    DB_DRIVER: str = os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server')
-    DB_ENCRYPT: str = os.getenv('DB_ENCRYPT', 'yes')
-    DB_TRUST_SERVER_CERTIFICATE: str = os.getenv('DB_TRUST_SERVER_CERTIFICATE', 'yes')
+    DB_USER: str = os.getenv('DB_USER', 'sa')
+    DB_PASSWORD: str = os.getenv('DB_PASSWORD', '')
     DB_CONNECTION_TIMEOUT_SECONDS: int = int(os.getenv('DB_CONNECTION_TIMEOUT_SECONDS', '30'))
 
     # Ollama API settings
