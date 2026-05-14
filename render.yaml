@@ -14,19 +14,14 @@ services:
         value: 3.11.9
       - key: LOG_LEVEL
         value: INFO
-      - key: DB_DRIVER
-        value: ODBC Driver 18 for SQL Server
-      - key: DB_ENCRYPT
-        value: yes
-      - key: DB_TRUST_SERVER_CERTIFICATE
-        value: yes
+      # Using pymssql (no ODBC driver required)
       - key: DB_CONNECTION_TIMEOUT_SECONDS
         value: "30"
       - key: DB_SERVER
         sync: false
       - key: DB_DATABASE
         sync: false
-      - key: DB_USERNAME
+      - key: DB_USER
         sync: false
       - key: DB_PASSWORD
         sync: false
