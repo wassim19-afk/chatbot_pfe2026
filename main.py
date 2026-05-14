@@ -65,6 +65,7 @@ print("=" * 80)
 
 
 API_KEY = os.getenv("API_KEY")
+MOCK_RESPONSES = str(os.getenv("MOCK_RESPONSES", "false")).lower() in ("1", "true", "yes")
 
 
 class ChatRequest(BaseModel):
@@ -121,6 +122,11 @@ async def startup_event() -> None:
     logger.info("DB_DATABASE: %s", os.getenv("DB_DATABASE", "not set"))
     logger.info("DB_USER: %s", "set" if os.getenv("DB_USER") else "not set")
     logger.info("LOG_LEVEL: %s", os.getenv("LOG_LEVEL", "INFO"))
+    
+    # If MOCK_RESPONSES is enabled, skip DB startup diagnostics to allow testing without a DB
+    if MOCK_RESPONSES:
+        logger.info("MOCK_RESPONSES enabled - skipping startup DB diagnostics")
+        return
     
     try:
         logger.info("Running BI service diagnostics...")
@@ -179,6 +185,7 @@ async def diagnostics_endpoint():
     """
     logger.info("/diagnostics request")
     
+    # Base diagnostics payload
     diagnostics_result = {
         "service": "bi-chat-api",
         "backend": "pymssql",
@@ -190,6 +197,19 @@ async def diagnostics_endpoint():
         "connection_test": False,
         "error": None,
     }
+
+    # If MOCK_RESPONSES is enabled, return a simulated successful diagnostics
+    if MOCK_RESPONSES:
+        diagnostics_result.update({
+            "db_server": os.getenv("DB_SERVER", "mock-sql-server"),
+            "db_database": os.getenv("DB_DATABASE", "mock_db"),
+            "db_user_set": True,
+            "connection_test": True,
+            "error": None,
+            "note": "MOCK_RESPONSES enabled - this is a simulated response",
+        })
+        logger.info("/diagnostics returning mock response (MOCK_RESPONSES=1)")
+        return diagnostics_result
     
     try:
         success = await asyncio.to_thread(test_db_connection)
@@ -223,6 +243,18 @@ async def chat_endpoint(req: ChatRequest, authorized: Any = Depends(verify_api_k
     logger.info("/chat request received: session_id=%s message=%r", req.session_id, req.message)
 
     try:
+        # If MOCK_RESPONSES is enabled, return a canned response for testing connectors
+        if MOCK_RESPONSES:
+            mock = ChatResponse(
+                type="kpi",
+                value=12345.67,
+                currency="USD",
+                dashboard_url="https://example.com/mock-dashboard",
+                data=[{"kpi": "CA 2024", "value": 12345.67}],
+            )
+            logger.info("/chat returning mock response (MOCK_RESPONSES=1)")
+            return mock.model_dump()
+
         result = await bi_query_service.query(req.message)
         response = ChatResponse(**result.__dict__)
         logger.info("/chat response=%s", response.model_dump())
