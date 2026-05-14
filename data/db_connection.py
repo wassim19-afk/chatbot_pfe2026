@@ -46,21 +46,6 @@ def get_db_connection():
             logger.warning("DB_USER/DB_PASSWORD not set — attempting connection without credentials (may fail on Render).")
             conn = pymssql.connect(host=server, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
 
-    logger.info(
-        "Creating SQL Server connection (server=%s, database=%s, user_set=%s)",
-        server,
-        database,
-        bool(user and password),
-    )
-
-    # pymssql.connect(host, user, password, database)
-    try:
-        if user and password:
-            conn = pymssql.connect(host=server, user=user, password=password, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
-        else:
-            logger.warning("DB_USER/DB_PASSWORD not set — attempting connection without credentials (may fail on Render).")
-            conn = pymssql.connect(host=server, database=database, timeout=settings.DB_CONNECTION_TIMEOUT_SECONDS)
-
         return conn
     except Exception:
         logger.exception("pymssql connection failed — verify DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD and network access")

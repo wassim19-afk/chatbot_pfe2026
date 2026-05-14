@@ -23,6 +23,47 @@ logging.basicConfig(
 logger = logging.getLogger("bi-chat-api")
 logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
 
+# ============================================================================
+# DEBUG: Verify Python packages (ensure pymssql loaded, no pyodbc)
+# ============================================================================
+print("=" * 80)
+print("DEBUG: Python packages verification")
+print("=" * 80)
+
+try:
+    import pymssql
+    print(f"[OK] pymssql LOADED | version: {pymssql.__version__}")
+except ImportError as e:
+    print(f"[ERROR] pymssql NOT FOUND: {e}")
+    raise
+
+try:
+    import pyodbc
+    print("[ERROR] WARNING: pyodbc IS INSTALLED (should not be!)")
+except ImportError:
+    print("[OK] pyodbc NOT INSTALLED (expected)")
+
+# Check installed packages
+try:
+    import pkg_resources
+    installed_packages = sorted([d.project_name.lower() for d in pkg_resources.working_set])
+    pyodbc_found = "pyodbc" in installed_packages
+    pymssql_found = "pymssql" in installed_packages
+    
+    print(f"[OK] pymssql in pip list: {pymssql_found}")
+    print(f"[OK] pyodbc in pip list: {pyodbc_found}")
+    
+    if pyodbc_found:
+        print("[ERROR] pyodbc found in requirements!")
+        raise RuntimeError("pyodbc should not be installed! Check requirements.txt")
+except Exception as e:
+    logger.warning("Could not check installed packages: %s", e)
+
+print("=" * 80)
+print("DEBUG: Package verification complete - proceeding with startup")
+print("=" * 80)
+
+
 API_KEY = os.getenv("API_KEY")
 
 
